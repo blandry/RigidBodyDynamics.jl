@@ -438,7 +438,7 @@ vector of joint torques ``\\tau`` (in place), in configuration `q`.
 """
 function joint_torque!(τ::AbstractVector, joint::Joint, q::AbstractVector, joint_wrench::Wrench)
     @boundscheck check_num_velocities(joint, τ)
-    @boundscheck check_num_positions(joint, q)
+    # @boundscheck check_num_positions(joint, q)
     @framecheck(joint_wrench.frame, frame_after(joint))
     joint_torque!(τ, joint.joint_type, q, joint_wrench)
 end

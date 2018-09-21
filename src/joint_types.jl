@@ -813,3 +813,80 @@ normalize_configuration!(q::AbstractVector, jt::QuaternionSpherical) = set_rotat
 function is_configuration_normalized(jt::QuaternionSpherical, q::AbstractVector, rtol, atol)
     isapprox(quatnorm(rotation(jt, q, false)), one(eltype(q)); rtol = rtol, atol = atol)
 end
+
+
+
+"""
+$(TYPEDEF)
+
+A `Soft` joint type allows rotation about one axis with a mass spring model
+"""
+struct Soft{T} <: OneDegreeOfFreedomFixedAxis{T}
+    axis::SVector{3, T}
+    rotation_from_z_aligned::RotMatrix3{T}
+    spring_constant::T
+    damping_constant::T
+
+    """
+    $(SIGNATURES)
+
+    Construct a new `Soft` joint type, allowing rotation about `axis`
+    (expressed in the frame before the joint).
+    """
+    function Soft(axis::AbstractVector{T}, spring_constant::T, damping_constant::T) where {T}
+        a = normalize(axis)
+        new{T}(a, rotation_between(SVector(zero(T), zero(T), one(T)), SVector{3, T}(a)), spring_constant, damping_constant)
+    end
+end
+
+Base.show(io::IO, jt::Soft) = print(io, "Soft joint with axis $(jt.axis), constants $(jt.spring_constant) $(jt.damping_constant)")
+function Random.rand(::Type{Soft{T}}) where {T}
+    axis = normalize(randn(SVector{3, T}))
+    Soft(axis,rand(T,1)[1],randn(T,1)[1])
+end
+
+RigidBodyDynamics.flip_direction(jt::Soft) = Soft(-jt.axis,jt.spring_constant,jt.damping_constant)
+
+function joint_transform(jt::Soft, frame_after::CartesianFrame3D, frame_before::CartesianFrame3D, q::AbstractVector)
+    @inbounds aa = AngleAxis(q[1], jt.axis[1], jt.axis[2], jt.axis[3], false)
+    Transform3D(frame_after, frame_before, convert(RotMatrix3{eltype(aa)}, aa))
+end
+
+function joint_twist(jt::Soft, frame_after::CartesianFrame3D, frame_before::CartesianFrame3D,
+        q::AbstractVector, v::AbstractVector)
+    angular = jt.axis * v[1]
+    Twist(frame_after, frame_before, frame_after, angular, zeros(angular))
+end
+
+function joint_spatial_acceleration(jt::Soft{T}, frame_after::CartesianFrame3D, frame_before::CartesianFrame3D,
+        q::AbstractVector{X}, v::AbstractVector{X}, vd::AbstractVector{XD}) where {T, X, XD}
+    S = promote_type(T, X, XD)
+    angular = convert(SVector{3, S}, jt.axis * vd[1])
+    SpatialAcceleration(frame_after, frame_before, frame_after, angular, zeros(angular))
+end
+
+function motion_subspace(jt::Soft{T}, frame_after::CartesianFrame3D, frame_before::CartesianFrame3D,
+        q::AbstractVector{X}) where {T, X}
+    S = promote_type(T, X)
+    angular = SMatrix{3, 1, S}(jt.axis)
+    linear = zeros(SMatrix{3, 1, S})
+    GeometricJacobian(frame_after, frame_before, frame_after, angular, linear)
+end
+
+function constraint_wrench_subspace(jt::Soft{T}, joint_transform::Transform3D{X}) where {T, X}
+    S = promote_type(T, X)
+    R = convert(RotMatrix3{S}, jt.rotation_from_z_aligned)
+    Rcols12 = R[:, SVector(1, 2)]
+    angular = hcat(Rcols12, zeros(SMatrix{3, 3, S}))
+    linear = hcat(zeros(SMatrix{3, 2, S}), R)
+    WrenchMatrix(joint_transform.from, angular, linear)
+end
+
+function joint_torque!(τ::AbstractVector, jt::Soft, q::AbstractVector, joint_wrench::Wrench)
+    @inbounds τ[1] = dot(angular(joint_wrench), jt.axis)
+    # applying the spring
+    τ[1] += jt.spring_constant * q[1]
+    # applying the damping
+    τ[1] += jt.damping_constant * q[2]
+    nothing
+end

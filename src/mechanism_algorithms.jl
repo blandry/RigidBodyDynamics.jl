@@ -464,13 +464,14 @@ function joint_wrenches_and_torques!(
 
     joints = state.treejoints
     qs = values(segments(state.q))
+    vs = values(segments(state.v))
     τs = values(segments(torquesout))
     discard = DiscardVector(length(qs))
-    broadcast!(discard, state, net_wrenches_in_joint_wrenches_out, joints, qs, τs) do state, wrenches, joint, qjoint, τjoint
+    broadcast!(discard, state, net_wrenches_in_joint_wrenches_out, joints, qs, vs, τs) do state, wrenches, joint, qjoint, vjoint, τjoint
         # TODO: awkward to transform back to body frame; consider switching to body-frame implementation
         bodyid = successorid(JointID(joint), state)
         tf = inv(transform_to_root(state, bodyid))
-        joint_torque!(τjoint, joint, qjoint, transform(wrenches[bodyid], tf)) # TODO: consider using motion subspace
+        joint_torque!(τjoint, joint, vcat(qjoint,vjoint), transform(wrenches[bodyid], tf)) # TODO: consider using motion subspace
     end
 end
 
